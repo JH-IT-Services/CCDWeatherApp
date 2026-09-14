@@ -39,3 +39,33 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ vars.IMAGE_QUEUE_LISTENER_REPOSITORY }}:latest
+
+  redeploy:
+    name: Redeploy to Azure
+    needs: build-images
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: 'Deploy API'
+        uses: 'azure/aci-deploy@v1'
+        with:
+          resource-group: ${{ vars.APP_NAME }}
+          dns-name-label: ${{ vars.APP_NAME }}${{ github.run_number }}
+          image: ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ vars.IMAGE_API_REPOSITORY }}:latest
+          registry-login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          registry-username: ${{ secrets.REGISTRY_USERNAME }}
+          registry-password: ${{ secrets.REGISTRY_PASSWORD }}
+          name: ${{ vars.APP_NAME }}api
+          location: ${{ vars.REGION }}
+
+      - name: 'Deploy Queue Listener'
+        uses: 'azure/aci-deploy@v1'
+        with:
+          resource-group: ${{ vars.APP_NAME }}
+          dns-name-label: ${{ vars.APP_NAME }}${{ github.run_number }}
+          image: ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ vars.IMAGE_QUEUE_LISTENER_REPOSITORY }}:latest
+          registry-login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          registry-username: ${{ secrets.REGISTRY_USERNAME }}
+          registry-password: ${{ secrets.REGISTRY_PASSWORD }}
+          name: ${{ vars.APP_NAME }}api
+          location: ${{ vars.REGION }}
