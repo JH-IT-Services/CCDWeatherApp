@@ -3,24 +3,44 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: ${{ vars.APP_NAME }}
+  REGISTRY_NAME: ${{ vars.APP_NAME }}registry
+  REGISTRY: ${{ vars.APP_NAME }}registry.azurecr.io
+  API_IMAGE: ${{ vars.APP_NAME }}registry.azurecr.io/${{ vars.IMAGE_API_REPOSITORY }}
+  QUEUE_LISTENER_IMAGE: ${{ vars.APP_NAME }}registry.azurecr.io/${{ vars.IMAGE_QUEUE_LISTENER_REPOSITORY }}
 
 jobs:
   build-images:
     name: Build Docker Images
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+
+      - name: Azure CLI Login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Login to Azure Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ secrets.REGISTRY_LOGIN_SERVER }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
+        run: az acr login --name "$REGISTRY_NAME"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
 
       - name: Build and push API
         uses: docker/build-push-action@v7
@@ -29,7 +49,9 @@ jobs:
           file: ./api/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ vars.IMAGE_API_REPOSITORY }}:latest
+          tags: |
+            ${{ env.API_IMAGE }}:${{ github.sha }}
+            ${{ env.API_IMAGE }}:latest
 
       - name: Build and push Queue Listener
         uses: docker/build-push-action@v7
@@ -38,34 +60,33 @@ jobs:
           file: ./queue-listener/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ vars.IMAGE_QUEUE_LISTENER_REPOSITORY }}:latest
+          tags: |
+            ${{ env.QUEUE_LISTENER_IMAGE }}:${{ github.sha }}
+            ${{ env.QUEUE_LISTENER_IMAGE }}:latest
 
-  redeploy:
-    name: Redeploy to Azure
+  deploy:
+    name: Deploy to Azure
     needs: build-images
     runs-on: ubuntu-24.04
 
     steps:
-      - name: 'Deploy API'
-        uses: 'azure/aci-deploy@v1'
+      - name: Azure CLI Login
+        uses: azure/login@v3
         with:
-          resource-group: ${{ vars.APP_NAME }}
-          dns-name-label: ${{ vars.APP_NAME }}${{ github.run_number }}
-          image: ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ vars.IMAGE_API_REPOSITORY }}:latest
-          registry-login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
-          registry-username: ${{ secrets.REGISTRY_USERNAME }}
-          registry-password: ${{ secrets.REGISTRY_PASSWORD }}
-          name: ${{ vars.APP_NAME }}api
-          location: ${{ vars.REGION }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: 'Deploy Queue Listener'
-        uses: 'azure/aci-deploy@v1'
-        with:
-          resource-group: ${{ vars.APP_NAME }}
-          dns-name-label: ${{ vars.APP_NAME }}${{ github.run_number }}
-          image: ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ vars.IMAGE_QUEUE_LISTENER_REPOSITORY }}:latest
-          registry-login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
-          registry-username: ${{ secrets.REGISTRY_USERNAME }}
-          registry-password: ${{ secrets.REGISTRY_PASSWORD }}
-          name: ${{ vars.APP_NAME }}api
-          location: ${{ vars.REGION }}
+      - name: Deploy API
+        run: |
+          az containerapp update \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "${{ vars.APP_NAME }}api" \
+            --image "$API_IMAGE:${{ github.sha }}"
+
+      - name: Deploy Queue Listener
+        run: |
+          az containerapp update \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "${{ vars.APP_NAME }}worker" \
+            --image "$QUEUE_LISTENER_IMAGE:${{ github.sha }}"
