@@ -38,3 +38,50 @@ az deployment group create \
   "imageContainerName=$IMAGE_CONTAINER_NAME" \
   "targetPort=$API_PORT" \
   "apiAccessToken=$ACCESS_TOKEN"
+
+# GitHub Actions deploy identity
+DEPLOY_IDENTITY_NAME="${APP_NAME}deploy"
+GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-$(git remote get-url origin | sed -E 's#.*github\.com[:/]##; s#\.git$##')}
+GITHUB_SUBJECT="repo:$GITHUB_REPOSITORY:ref:refs/heads/main"
+
+az identity create -g $APP_NAME -n $DEPLOY_IDENTITY_NAME -l $REGION --output none
+
+EXISTING_CREDENTIAL=$(az identity federated-credential list \
+  -g $APP_NAME \
+  --identity-name $DEPLOY_IDENTITY_NAME \
+  --query "[?subject=='$GITHUB_SUBJECT'].name" -o tsv)
+
+if [ -z "$EXISTING_CREDENTIAL" ]; then
+  az identity federated-credential create \
+    -g $APP_NAME \
+    --identity-name $DEPLOY_IDENTITY_NAME \
+    --name github-main \
+    --issuer https://token.actions.githubusercontent.com \
+    --subject "$GITHUB_SUBJECT" \
+    --audiences api://AzureADTokenExchange \
+    --output none
+fi
+
+DEPLOY_PRINCIPAL_ID=$(az identity show -g $APP_NAME -n $DEPLOY_IDENTITY_NAME --query principalId -o tsv)
+RESOURCE_GROUP_ID=$(az group show -n $APP_NAME --query id -o tsv)
+REGISTRY_ID=$(az acr show -n $IMAGE_SERVER_NAME --query id -o tsv)
+
+az role assignment create \
+  --assignee-object-id "$DEPLOY_PRINCIPAL_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role Contributor \
+  --scope "$RESOURCE_GROUP_ID" \
+  --output none
+
+az role assignment create \
+  --assignee-object-id "$DEPLOY_PRINCIPAL_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role AcrPush \
+  --scope "$REGISTRY_ID" \
+  --output none
+
+echo
+echo "GitHub Actions secrets for $GITHUB_REPOSITORY:"
+echo "  AZURE_CLIENT_ID=$(az identity show -g $APP_NAME -n $DEPLOY_IDENTITY_NAME --query clientId -o tsv)"
+echo "  AZURE_TENANT_ID=$(az account show --query tenantId -o tsv)"
+echo "  AZURE_SUBSCRIPTION_ID=$(az account show --query id -o tsv)"
