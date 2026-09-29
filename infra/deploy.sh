@@ -41,8 +41,8 @@ az deployment group create \
 
 # GitHub Actions deploy identity
 DEPLOY_IDENTITY_NAME="${APP_NAME}deploy"
-GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-$(git remote get-url origin | sed -E 's#.*github\.com[:/]##; s#\.git$##')}
-GITHUB_SUBJECT="repo:$GITHUB_REPOSITORY:ref:refs/heads/main"
+GITHUB_SUBJECT_PREFIX=$(gh api "repos/$GITHUB_REPOSITORY/actions/oidc/customization/sub" --jq .sub_claim_prefix)
+GITHUB_SUBJECT="$GITHUB_SUBJECT_PREFIX:ref:refs/heads/main"
 
 az identity create -g $APP_NAME -n $DEPLOY_IDENTITY_NAME -l $REGION --output none
 

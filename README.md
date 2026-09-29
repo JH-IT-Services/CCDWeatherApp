@@ -3,6 +3,7 @@
 ## Prerequisites
 - Docker CLI must be installed
 - Azure CLI must be installed
+- GitHub CLI must be installed and logged in (`gh auth login`), used to configure the deploy credential
 - You must have access to an active Azure account
 - Azure CLI must be logged in to said Azure account (`az login`)
 
